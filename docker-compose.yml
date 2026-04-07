@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  garage:
+    image: dxflrs/garage:v2.2.0
+    container_name: garage
+    ports:
+      - "3900:3900" # Porta principal da API do S3
+      - "3901:3901" # RPC (Comunicação interna do Garage)
+      - "3902:3902" # Web (Acesso público via navegador, opcional)
+      - "3903:3903" # Admin API (Opcional)
+    volumes:
+      - ./garage.toml:/etc/garage.toml     # Injeta nossa configuração
+      - ./garage-meta:/var/lib/garage/meta # Onde os metadados ficarão salvos
+      - ./garage-data:/var/lib/garage/data # Onde os arquivos reais ficarão salvos
+    restart: unless-stopped
