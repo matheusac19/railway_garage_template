@@ -5,7 +5,7 @@ set -e
 # 1. Cria as pastas no Volume em tempo de execução
 mkdir -p /data/meta /data/data
 
-PORT=3900
+PORT=${PORT:-3900}
 GARAGE_BUCKET=${GARAGE_BUCKET:-"meu-bucket"}
 GARAGE_KEY_NAME=${GARAGE_KEY_NAME:-"admin-key"}
 
