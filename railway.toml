@@ -3,8 +3,10 @@ builder = "DOCKERFILE"
 
 [deploy]
 restartPolicyType = "ON_FAILURE"
+# Força a Railway a rodar o script (Ignora se o Dockerfile falhar)
+startCommand = "sh /start.sh"
+# Força a Railway a procurar a saúde na rota correta
+healthcheckPath = "/?health"
 
-# Isso aqui diz para a Railway: "Sempre que alguém instalar esse template, 
-# crie um disco rígido e plugue na pasta /data automaticamente!"
 [volumes.data]
 mountPath = "/data"
