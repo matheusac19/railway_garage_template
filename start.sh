@@ -1,4 +1,3 @@
-# start.sh
 #!/bin/sh
 set -e
 
@@ -16,19 +15,19 @@ if [ -f "/data/rpc_secret" ]; then
     echo "🔒 RPC Secret carregado do volume persistente."
 else
     # Limpa possíveis espaços em branco que a Railway possa injetar
-    USER_SECRET=$(echo "$GARAGE_RPC_SECRET" | tr -d ' ')
+    USER_SECRET=$(echo "$GARAGE_RPC_SECRET" | tr -d ' ' | tr -d '\n')
     
-    # Verifica se o usuário passou uma senha válida (exatamente 64 caracteres)
-    if [ "${#USER_SECRET}" -eq 64 ]; then
+    # Verifica se o usuário passou uma senha válida no padrão hexa de 64 chars
+    if echo "$USER_SECRET" | grep -qE '^[0-9a-fA-F]{64}$'; then
         echo "🔒 Usando a senha RPC fornecida pela variável da Railway..."
         GARAGE_RPC_SECRET=$USER_SECRET
     else
-        echo "⚠️ RPC Secret não fornecido ou inválido (precisa ter 64 caracteres). Gerando um aleatório..."
+        echo "⚠️ RPC Secret não fornecido ou inválido (precisa ter 64 caracteres hexadecimais). Gerando um aleatório..."
         GARAGE_RPC_SECRET=$(openssl rand -hex 32)
     fi
     
     # Salva no disco para os próximos reboots
-    echo "$GARAGE_RPC_SECRET" > /data/rpc_secret
+    echo -n "$GARAGE_RPC_SECRET" > /data/rpc_secret
 fi
 
 # 3. Gera o arquivo de configuração do Garage
@@ -77,7 +76,9 @@ if [ ! -f "/data/.initialized" ]; then
     # Cria/Importa a chave baseada nas variáveis da Railway
     if [ -n "$GARAGE_ACCESS_KEY" ] && [ -n "$GARAGE_SECRET_KEY" ]; then
         echo "🔑 Importando as chaves personalizadas da Railway..."
-        garage -c /etc/garage.toml key import --name $GARAGE_KEY_NAME $GARAGE_ACCESS_KEY $GARAGE_SECRET_KEY
+        # Correção: O comando 'import' não aceita '--name' no Garage v2.2.0
+        garage -c /etc/garage.toml key import --name $GARAGE_KEY_NAME $GARAGE_ACCESS_KEY $GARAGE_SECRET_KEY || \
+        garage -c /etc/garage.toml key import $GARAGE_ACCESS_KEY $GARAGE_SECRET_KEY
     else
         echo "⚠️ AVISO: Nenhuma chave personalizada definida nas variáveis."
         echo "🔑 GERANDO CHAVES DE ACESSO ALEATÓRIAS (Copie isso!):"
@@ -85,7 +86,12 @@ if [ ! -f "/data/.initialized" ]; then
     fi
     
     # Autoriza o uso do bucket
-    garage -c /etc/garage.toml bucket allow $GARAGE_BUCKET --read --write --key $GARAGE_KEY_NAME
+    echo "🔐 Aplicando permissões ao Bucket..."
+    if [ -n "$GARAGE_ACCESS_KEY" ] && [ -n "$GARAGE_SECRET_KEY" ]; then
+        garage -c /etc/garage.toml bucket allow $GARAGE_BUCKET --read --write --key $GARAGE_ACCESS_KEY
+    else
+        garage -c /etc/garage.toml bucket allow $GARAGE_BUCKET --read --write --key $GARAGE_KEY_NAME
+    fi
     
     # Marca como inicializado para não rodar de novo
     touch /data/.initialized
