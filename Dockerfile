@@ -1,8 +1,8 @@
 # Usa uma imagem Alpine levíssima
 FROM alpine:3.19
 
-# Instala ferramentas necessárias
-RUN apk add --no-cache curl awk openssl
+# Instala ferramentas necessárias (removemos o awk daqui)
+RUN apk add --no-cache curl openssl
 
 # Baixa a versão oficial mais recente do Garage (v2.2.0)
 RUN curl -L -o /usr/local/bin/garage https://garagehq.deuxfleurs.fr/_releases/v2.2.0/x86_64-unknown-linux-musl/garage \
