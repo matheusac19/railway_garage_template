@@ -64,7 +64,7 @@ if [ ! -f "/data/.initialized" ]; then
     echo "✅ Inicialização concluída com sucesso!"
     echo "=========================================================="
 else
-    echo "✅ Garage já estava inicializado. Carregando dados do Volume..."
+    echo "✅ Garage já estava inicializado. Carregando dados do Volume.."
 fi
 
 # Mantém o container vivo
