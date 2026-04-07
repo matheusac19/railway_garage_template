@@ -1,0 +1,10 @@
+[build]
+builder = "DOCKERFILE"
+
+[deploy]
+restartPolicyType = "ON_FAILURE"
+
+# Isso aqui diz para a Railway: "Sempre que alguém instalar esse template, 
+# crie um disco rígido e plugue na pasta /data automaticamente!"
+[volumes.data]
+mountPath = "/data"
