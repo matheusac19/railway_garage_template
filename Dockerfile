@@ -15,8 +15,5 @@ RUN mkdir -p /data/meta /data/data /etc/garage
 COPY start.sh /start.sh
 RUN chmod +x /start.sh
 
-# Informa ao Docker que /data será um ponto de montagem persistente
-VOLUME /data
-
 # Inicia o container pelo nosso script
 CMD ["/start.sh"]
