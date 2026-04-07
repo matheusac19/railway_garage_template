@@ -8,12 +8,27 @@ PORT=${PORT:-3900}
 GARAGE_BUCKET=${GARAGE_BUCKET:-"meu-bucket"}
 GARAGE_KEY_NAME=${GARAGE_KEY_NAME:-"admin-key"}
 
-# 2. VALIDAÇÃO ABSOLUTA DO RPC SECRET (Salvo direto no disco)
-if [ ! -f "/data/rpc_secret" ]; then
-    echo "🔒 Gerando nova senha RPC interna e salvando no volume persistente..."
-    openssl rand -hex 32 > /data/rpc_secret
+# 2. GESTÃO INTELIGENTE DO RPC SECRET
+if [ -f "/data/rpc_secret" ]; then
+    # Se já inicializou antes, usa o do disco para garantir consistência
+    GARAGE_RPC_SECRET=$(cat /data/rpc_secret)
+    echo "🔒 RPC Secret carregado do volume persistente."
+else
+    # Limpa possíveis espaços em branco que a Railway possa injetar
+    USER_SECRET=$(echo "$GARAGE_RPC_SECRET" | tr -d ' ')
+    
+    # Verifica se o usuário passou uma senha válida (exatamente 64 caracteres)
+    if [ "${#USER_SECRET}" -eq 64 ]; then
+        echo "🔒 Usando a senha RPC fornecida pela variável da Railway..."
+        GARAGE_RPC_SECRET=$USER_SECRET
+    else
+        echo "⚠️ RPC Secret não fornecido ou inválido (precisa ter 64 caracteres). Gerando um aleatório..."
+        GARAGE_RPC_SECRET=$(openssl rand -hex 32)
+    fi
+    
+    # Salva no disco para os próximos reboots
+    echo "$GARAGE_RPC_SECRET" > /data/rpc_secret
 fi
-GARAGE_RPC_SECRET=$(cat /data/rpc_secret)
 
 # 3. Gera o arquivo de configuração do Garage
 cat <<EOF > /etc/garage.toml
