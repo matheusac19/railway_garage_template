@@ -4,14 +4,18 @@ set -e
 # 1. Cria as pastas no Volume em tempo de execução
 mkdir -p /data/meta /data/data
 
-# Railway fornece a variável $PORT dinamicamente. Se não existir, usa 3900.
 PORT=${PORT:-3900}
-
-GARAGE_RPC_SECRET=${GARAGE_RPC_SECRET:-$(openssl rand -hex 32)}
 GARAGE_BUCKET=${GARAGE_BUCKET:-"meu-bucket"}
 GARAGE_KEY_NAME=${GARAGE_KEY_NAME:-"admin-key"}
 
-# 2. Gera o arquivo de configuração do Garage
+# 2. VALIDAÇÃO ABSOLUTA DO RPC SECRET (Salvo direto no disco)
+if [ ! -f "/data/rpc_secret" ]; then
+    echo "🔒 Gerando nova senha RPC interna e salvando no volume persistente..."
+    openssl rand -hex 32 > /data/rpc_secret
+fi
+GARAGE_RPC_SECRET=$(cat /data/rpc_secret)
+
+# 3. Gera o arquivo de configuração do Garage
 cat <<EOF > /etc/garage.toml
 metadata_dir = "/data/meta"
 data_dir = "/data/data"
@@ -26,14 +30,14 @@ s3_region = "garage"
 api_bind_addr = "[::]:${PORT}"
 EOF
 
-# 3. Inicia o Garage em background
+# 4. Inicia o Garage em background
 echo "Iniciando o Garage localmente na porta $PORT..."
 garage -c /etc/garage.toml server > /tmp/garage.log 2>&1 &
 GARAGE_PID=$!
 
 sleep 5
 
-# 4. AUTO-INICIALIZAÇÃO
+# 5. AUTO-INICIALIZAÇÃO DO CLUSTER
 if [ ! -f "/data/.initialized" ]; then
     echo "=========================================================="
     echo "🚀 Inicializando Cluster Garage pela primeira vez..."
@@ -54,9 +58,17 @@ if [ ! -f "/data/.initialized" ]; then
     # Cria o Bucket
     garage -c /etc/garage.toml bucket create $GARAGE_BUCKET
     
-    # Cria a chave e exibe no log
-    echo "🔑 GERANDO CHAVES DE ACESSO (Copie isso!):"
-    garage -c /etc/garage.toml key create $GARAGE_KEY_NAME
+    # Cria/Importa a chave baseada nas variáveis da Railway
+    if [ -n "$GARAGE_ACCESS_KEY" ] && [ -n "$GARAGE_SECRET_KEY" ]; then
+        echo "🔑 Importando as chaves personalizadas da Railway..."
+        garage -c /etc/garage.toml key import --name $GARAGE_KEY_NAME $GARAGE_ACCESS_KEY $GARAGE_SECRET_KEY
+    else
+        echo "⚠️ AVISO: Nenhuma chave personalizada definida nas variáveis."
+        echo "🔑 GERANDO CHAVES DE ACESSO ALEATÓRIAS (Copie isso!):"
+        garage -c /etc/garage.toml key create $GARAGE_KEY_NAME
+    fi
+    
+    # Autoriza o uso do bucket
     garage -c /etc/garage.toml bucket allow $GARAGE_BUCKET --read --write --key $GARAGE_KEY_NAME
     
     # Marca como inicializado para não rodar de novo
@@ -64,7 +76,7 @@ if [ ! -f "/data/.initialized" ]; then
     echo "✅ Inicialização concluída com sucesso!"
     echo "=========================================================="
 else
-    echo "✅ Garage já estava inicializado. Carregando dados do Volume.."
+    echo "✅ Garage já estava inicializado. Carregando dados do Volume..."
 fi
 
 # Mantém o container vivo
