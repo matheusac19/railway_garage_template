@@ -102,21 +102,23 @@ if [ ! -f "/data/.initialized" ]; then
         # Keys shorter or longer than this will be rejected by Garage on import.
         KEY_LEN=${#GARAGE_ACCESS_KEY}
         KEY_SUFFIX=$(echo "$GARAGE_ACCESS_KEY" | sed 's/^GK//')
+        SUFFIX_LEN=${#KEY_SUFFIX}
         if [ "$KEY_LEN" -ne 28 ] || ! echo "$KEY_SUFFIX" | grep -qE '^[0-9a-zA-Z]{26}$'; then
             echo "[ERROR] --------------------------------------------------------"
             echo "[ERROR] GARAGE_ACCESS_KEY is invalid: '${GARAGE_ACCESS_KEY}'"
             echo "[ERROR]"
-            echo "[ERROR] Garage requires: 'GK' + exactly 26 alphanumeric chars"
-            echo "[ERROR]   Your key : ${KEY_LEN} characters  ← must be 28"
-            echo "[ERROR]   Required : GK + 26 alphanumeric  = 28 characters total"
+            echo "[ERROR] Garage requires: GK + exactly 26 alphanumeric chars = 28 total"
+            echo "[ERROR]   Your key : GK + ${SUFFIX_LEN} chars = ${KEY_LEN} total  ← must be GK + 26 = 28"
             echo "[ERROR]"
-            echo "[ERROR] Fix — run these commands to generate a valid pair:"
+            echo "[ERROR] Fix — generate a valid pair in any terminal:"
             echo "[ERROR]   Access Key: echo \"GK\$(openssl rand -hex 13)\""
             echo "[ERROR]   Secret Key: openssl rand -hex 32"
             echo "[ERROR]"
-            echo "[ERROR] Then update GARAGE_ACCESS_KEY and GARAGE_SECRET_KEY"
-            echo "[ERROR] in Railway → Variables, and redeploy."
+            echo "[ERROR] Update GARAGE_ACCESS_KEY and GARAGE_SECRET_KEY in"
+            echo "[ERROR] Railway → Variables, then redeploy."
             echo "[ERROR] --------------------------------------------------------"
+            echo "[ERROR] Waiting 60s before restarting to avoid log flooding..."
+            sleep 60
             exit 1
         fi
 
@@ -127,6 +129,8 @@ if [ ! -f "/data/.initialized" ]; then
                 echo "[ERROR] Key import failed. Garage response:"
                 echo "        ${IMPORT_OUT}"
                 echo "[ERROR] Check that GARAGE_ACCESS_KEY and GARAGE_SECRET_KEY are valid."
+                echo "[ERROR] Waiting 60s before restarting to avoid log flooding..."
+                sleep 60
                 exit 1
             }
         garage -c /etc/garage.toml bucket allow "$GARAGE_BUCKET" --read --write --key "$GARAGE_ACCESS_KEY" >/dev/null 2>&1 \
