@@ -3,10 +3,9 @@ builder = "DOCKERFILE"
 
 [deploy]
 restartPolicyType = "ON_FAILURE"
-# Força a Railway a rodar o script (Ignora se o Dockerfile falhar)
+# Explicitly set the start command so Railway always runs start.sh
 startCommand = "sh /start.sh"
-# Força a Railway a procurar a saúde na rota correta
-healthcheckPath = "/?health"
 
 [volumes.data]
+# Persistent volume — stores Garage metadata, data, and the RPC secret across restarts
 mountPath = "/data"
