@@ -22,7 +22,6 @@ if [ -f "/data/rpc_secret" ]; then
     echo "[INFO] RPC secret loaded from persistent volume."
 else
     USER_SECRET=$(echo "$GARAGE_RPC_SECRET" | tr -d ' ' | tr -d '\n')
-
     if echo "$USER_SECRET" | grep -qE '^[0-9a-fA-F]{64}$'; then
         echo "[INFO] Using RPC secret supplied via GARAGE_RPC_SECRET."
         GARAGE_RPC_SECRET=$USER_SECRET
@@ -69,11 +68,13 @@ done
 echo "[INFO] Garage is ready (${WAITED}s elapsed)."
 
 # 5. One-time cluster initialization (guarded by a flag file on the volume)
+#    The flag is only written at the END, so a partial failure forces a clean retry.
 if [ ! -f "/data/.initialized" ]; then
     echo "----------------------------------------------------------"
     echo "[INIT] First-boot cluster setup..."
 
-    NODE_ID=$(garage -c /etc/garage.toml node id | head -n 1 | awk -F'@' '{print $1}')
+    # Suppress Garage's verbose CLI output — only our [INIT] messages are shown
+    NODE_ID=$(garage -c /etc/garage.toml node id 2>/dev/null | head -n 1 | awk -F'@' '{print $1}')
     if [ -z "$NODE_ID" ]; then
         echo "[ERROR] Could not retrieve node ID. Server logs:"
         cat /tmp/garage.log
@@ -81,34 +82,76 @@ if [ ! -f "/data/.initialized" ]; then
     fi
     echo "[INIT] Node ID: ${NODE_ID}"
 
-    # Assign layout — safe to run multiple times; skip silently if already done
-    garage -c /etc/garage.toml layout assign -z dc1 -c 1G "$NODE_ID" 2>/dev/null \
+    # Assign layout — both stdout and stderr suppressed; only our messages show
+    garage -c /etc/garage.toml layout assign -z dc1 -c 1G "$NODE_ID" >/dev/null 2>&1 \
+        && echo "[INIT] Layout assigned (zone: dc1, capacity: 1G, partitions: 256)." \
         || echo "[INIT] Layout already assigned — skipping."
-    garage -c /etc/garage.toml layout apply --version 1 2>/dev/null \
+    garage -c /etc/garage.toml layout apply --version 1 >/dev/null 2>&1 \
+        && echo "[INIT] Layout applied." \
         || echo "[INIT] Layout version 1 already applied — skipping."
 
     # Create the default bucket
     echo "[INIT] Creating bucket: ${GARAGE_BUCKET}"
-    garage -c /etc/garage.toml bucket create "$GARAGE_BUCKET" 2>/dev/null \
+    garage -c /etc/garage.toml bucket create "$GARAGE_BUCKET" >/dev/null 2>&1 \
         || echo "[INIT] Bucket already exists — skipping."
 
-    # Configure access keys
+    # Configure access credentials
     if [ -n "$GARAGE_ACCESS_KEY" ] && [ -n "$GARAGE_SECRET_KEY" ]; then
-        # Use the custom key pair provided via environment variables
+        # --- Custom key path ---
+        # Validate: Garage key IDs must be exactly 'GK' + 26 alphanumeric characters (28 total).
+        # Keys shorter or longer than this will be rejected by Garage on import.
+        KEY_LEN=${#GARAGE_ACCESS_KEY}
+        KEY_SUFFIX=$(echo "$GARAGE_ACCESS_KEY" | sed 's/^GK//')
+        if [ "$KEY_LEN" -ne 28 ] || ! echo "$KEY_SUFFIX" | grep -qE '^[0-9a-zA-Z]{26}$'; then
+            echo "[ERROR] --------------------------------------------------------"
+            echo "[ERROR] GARAGE_ACCESS_KEY is invalid: '${GARAGE_ACCESS_KEY}'"
+            echo "[ERROR]"
+            echo "[ERROR] Garage requires: 'GK' + exactly 26 alphanumeric chars"
+            echo "[ERROR]   Your key : ${KEY_LEN} characters  ← must be 28"
+            echo "[ERROR]   Required : GK + 26 alphanumeric  = 28 characters total"
+            echo "[ERROR]"
+            echo "[ERROR] Fix — run these commands to generate a valid pair:"
+            echo "[ERROR]   Access Key: echo \"GK\$(openssl rand -hex 13)\""
+            echo "[ERROR]   Secret Key: openssl rand -hex 32"
+            echo "[ERROR]"
+            echo "[ERROR] Then update GARAGE_ACCESS_KEY and GARAGE_SECRET_KEY"
+            echo "[ERROR] in Railway → Variables, and redeploy."
+            echo "[ERROR] --------------------------------------------------------"
+            exit 1
+        fi
+
         echo "[INIT] Importing custom access key: ${GARAGE_ACCESS_KEY}"
-        garage -c /etc/garage.toml key import --yes "$GARAGE_ACCESS_KEY" "$GARAGE_SECRET_KEY" 2>/dev/null \
-            || echo "[INIT] Key already imported — skipping."
-        garage -c /etc/garage.toml bucket allow "$GARAGE_BUCKET" --read --write --key "$GARAGE_ACCESS_KEY" 2>/dev/null \
-            || echo "[INIT] Permission already granted — skipping."
+        IMPORT_OUT=$(garage -c /etc/garage.toml key import --yes "$GARAGE_ACCESS_KEY" "$GARAGE_SECRET_KEY" 2>&1) \
+            && echo "[INIT] Custom access key imported successfully." \
+            || {
+                echo "[ERROR] Key import failed. Garage response:"
+                echo "        ${IMPORT_OUT}"
+                echo "[ERROR] Check that GARAGE_ACCESS_KEY and GARAGE_SECRET_KEY are valid."
+                exit 1
+            }
+        garage -c /etc/garage.toml bucket allow "$GARAGE_BUCKET" --read --write --key "$GARAGE_ACCESS_KEY" >/dev/null 2>&1 \
+            || echo "[INIT] Bucket permission already set."
+
     else
-        # Generate a new random key with the configured name
-        echo "[INIT] Creating access key: ${GARAGE_KEY_NAME}"
-        garage -c /etc/garage.toml key create "$GARAGE_KEY_NAME" 2>/dev/null \
-            || echo "[INIT] Key already exists — skipping."
-        garage -c /etc/garage.toml bucket allow "$GARAGE_BUCKET" --read --write --key "$GARAGE_KEY_NAME" 2>/dev/null \
-            || echo "[INIT] Permission already granted — skipping."
+        # --- Auto-generated key path ---
+        echo "[INIT] Creating auto-generated access key: ${GARAGE_KEY_NAME}"
+        # Capture key create output to extract and persist credentials (secret is only shown once)
+        KEY_OUT=$(garage -c /etc/garage.toml key create "$GARAGE_KEY_NAME" 2>&1) || true
+        if echo "$KEY_OUT" | grep -q "Key ID"; then
+            GEN_KEY_ID=$(echo "$KEY_OUT" | awk '/Key ID/{print $NF}')
+            GEN_SECRET=$(echo "$KEY_OUT" | awk '/Secret key/{print $NF}')
+            # Save to volume — survives restarts and is used in the connection summary
+            printf '%s\n' "$GEN_KEY_ID" > /data/auto_key_id
+            printf '%s\n' "$GEN_SECRET" > /data/auto_key_secret
+            echo "[INIT] Access key created: ${GEN_KEY_ID}"
+        else
+            echo "[INIT] Key '${GARAGE_KEY_NAME}' already exists."
+        fi
+        garage -c /etc/garage.toml bucket allow "$GARAGE_BUCKET" --read --write --key "$GARAGE_KEY_NAME" >/dev/null 2>&1 \
+            || echo "[INIT] Bucket permission already set."
     fi
 
+    # Only mark as initialized after ALL steps succeed
     touch /data/.initialized
     echo "[INIT] Cluster initialization complete."
     echo "----------------------------------------------------------"
@@ -132,32 +175,55 @@ echo "  Region   : garage"
 echo "  Bucket   : ${GARAGE_BUCKET}"
 
 if [ -n "$GARAGE_ACCESS_KEY" ] && [ -n "$GARAGE_SECRET_KEY" ]; then
-    echo "  Access Key: ${GARAGE_ACCESS_KEY}"
-    echo "  Secret Key: (value of GARAGE_SECRET_KEY env var)"
+    # Custom key — show the key ID, reference the env var for the secret
+    DISPLAY_ACCESS_KEY="$GARAGE_ACCESS_KEY"
+    CLI_SECRET_KEY='$GARAGE_SECRET_KEY'   # literal shell var reference, not the value
+    echo "  Access Key: ${DISPLAY_ACCESS_KEY}"
+    echo "  Secret Key: (see GARAGE_SECRET_KEY environment variable)"
+elif [ -f "/data/auto_key_id" ]; then
+    # Auto-generated key — read credentials saved during init
+    DISPLAY_ACCESS_KEY=$(cat /data/auto_key_id)
+    CLI_SECRET_KEY=$(cat /data/auto_key_secret 2>/dev/null || echo "<not found>")
+    echo "  Access Key: ${DISPLAY_ACCESS_KEY}"
+    echo "  Secret Key: ${CLI_SECRET_KEY}"
 else
+    # Fallback: query Garage (secret may not be available after first boot)
     KEY_INFO=$(garage -c /etc/garage.toml key info "$GARAGE_KEY_NAME" 2>/dev/null || true)
-    ACCESS_KEY=$(echo "$KEY_INFO" | awk '/Key ID/{print $NF}')
-    SECRET_KEY=$(echo "$KEY_INFO" | awk '/Secret key/{print $NF}')
-    if [ -n "$ACCESS_KEY" ]; then
-        echo "  Access Key: ${ACCESS_KEY}"
-        echo "  Secret Key: ${SECRET_KEY}"
+    DISPLAY_ACCESS_KEY=$(echo "$KEY_INFO" | awk '/Key ID/{print $NF}')
+    CLI_SECRET_KEY=$(echo "$KEY_INFO" | awk '/Secret key/{print $NF}')
+    if [ -n "$DISPLAY_ACCESS_KEY" ]; then
+        echo "  Access Key: ${DISPLAY_ACCESS_KEY}"
+        echo "  Secret Key: ${CLI_SECRET_KEY:-run 'garage key info ${GARAGE_KEY_NAME}' in Railway console}"
+    else
+        echo "  Credentials: run 'garage key info ${GARAGE_KEY_NAME}' in the Railway console"
     fi
 fi
 
 echo ""
 echo "  AWS CLI quick-start:"
-echo "    export AWS_ACCESS_KEY_ID=<access-key>"
-echo "    export AWS_SECRET_ACCESS_KEY=<secret-key>"
-echo "    aws s3 ls s3://${GARAGE_BUCKET} \\"
+echo "    export AWS_ACCESS_KEY_ID=${DISPLAY_ACCESS_KEY:-<access-key>}"
+echo "    export AWS_SECRET_ACCESS_KEY=${CLI_SECRET_KEY:-<secret-key>}"
+echo "    aws s3 cp ./file.txt s3://${GARAGE_BUCKET}/file.txt \\"
 echo "      --endpoint-url ${ENDPOINT} \\"
 echo "      --region garage"
 echo ""
-echo "  Available environment variables:"
-echo "    GARAGE_BUCKET       bucket name              (default: my-bucket)"
-echo "    GARAGE_KEY_NAME     auto-generated key name  (default: admin-key)"
-echo "    GARAGE_RPC_SECRET   64-char hex RPC secret   (auto-generated)"
-echo "    GARAGE_ACCESS_KEY   custom S3 access key     (must start with GK)"
-echo "    GARAGE_SECRET_KEY   custom S3 secret key     (64-char hex)"
+echo "  !! REQUIRED — path-style addressing (Railway has no wildcard subdomains):"
+echo "     boto3   : Config(s3={'addressing_style': 'path'})"
+echo "     AWS SDK : forcePathStyle: true"
+echo "     s3cmd   : --host-bucket=''"
+echo ""
+echo "  !! S3 key must be a relative path, not a full OS path:"
+echo "     Wrong  : s3://${GARAGE_BUCKET}/C:/Users/you/file.txt"
+echo "     Correct: s3://${GARAGE_BUCKET}/file.txt"
+echo ""
+echo "  Env vars (Railway → Variables):"
+echo "    GARAGE_BUCKET       bucket name                   (default: my-bucket)"
+echo "    GARAGE_KEY_NAME     label for auto-generated key  (default: admin-key)"
+echo "    GARAGE_ACCESS_KEY   custom key ID  → GK + 26 alphanumeric = 28 chars"
+echo "    GARAGE_SECRET_KEY   custom secret  → 64-char hexadecimal string"
+echo ""
+echo "  If something is broken: open Console tab and run 'rm /data/.initialized'"
+echo "  then fix your Variables and redeploy. See README for full troubleshooting."
 echo "=========================================================="
 
 # Keep the container alive by waiting on the Garage process
