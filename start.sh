@@ -47,7 +47,7 @@ s3_region = "garage"
 api_bind_addr = "[::]:${PORT}"
 
 [admin]
-api_bind_addr = "127.0.0.1:3902"
+api_bind_addr = "0.0.0.0:3902"
 EOF
 
 # 4. Start Garage server in the background
