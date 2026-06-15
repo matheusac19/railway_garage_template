@@ -62,7 +62,7 @@ GARAGE_PID=$!
 echo "[INFO] Waiting for Garage to be ready..."
 MAX_WAIT=30
 WAITED=0
-until curl -sf http://127.0.0.1:3902/health > /dev/null 2>&1; do
+until curl -s --max-time 3 http://127.0.0.1:3902/health -o /dev/null -w '%{http_code}' 2>/dev/null | grep -qE '^(200|503)'; do
     if [ "$WAITED" -ge "$MAX_WAIT" ]; then
         echo "[ERROR] Garage did not become ready after ${MAX_WAIT}s. Server logs:"
         cat /tmp/garage.log
