@@ -44,30 +44,31 @@ Set the following variables in Railway **before** clicking Deploy:
 
 #### ⚠️ Access Key Format — #1 cause of `AccessDenied` errors
 
-`GARAGE_ACCESS_KEY` must follow this **exact** format:
+`GARAGE_ACCESS_KEY` must follow this **exact** format (enforced by Garage v2):
 - Start with `GK`
-- Followed by **exactly 26 alphanumeric characters** (`0–9`, `a–z`, `A–Z`)
-- **Total: 28 characters**
+- Followed by **exactly 24 hexadecimal characters** (`0–9` and `a–f` only — no other letters)
+- **Total: 26 characters**
 
-| | Value | Length | Valid? |
-|---|---|---|---|
-| ❌ | `GKmykey` | 7 chars | Too short |
-| ❌ | `GKenergiaDoBem2026` | 18 chars | Too short |
-| ✅ | `GK3a7f9c2e1b4d6a8e5f7c9d2ba3` | 28 chars | Correct |
+| | Value | Problem |
+|---|---|---|
+| ❌ | `GKmykey` | Too short + invalid chars |
+| ❌ | `GKenergiaDoBem2026` | `n`, `r`, `g`, `i` are not hex |
+| ❌ | `GKenergiaDoBemProjeto2026001` | Invalid hex chars + wrong length |
+| ✅ | `GK3a7f9c2e1b4d6a8e5f7c9d2b` | Correct — GK + 24 hex = 26 total |
 
 **Generate a valid key pair with one command:**
 
 ```bash
-# Paste these in any terminal (Linux, Mac, Git Bash, WSL):
+# Run in any terminal (Linux, Mac, Git Bash, WSL):
 
-# Access Key:
-echo "GK$(openssl rand -hex 13)"
+# Access Key (GK + 24 hex chars = 26 total):
+echo "GK$(openssl rand -hex 12)"
 
-# Secret Key:
+# Secret Key (64 hex chars):
 openssl rand -hex 32
 ```
 
-`GARAGE_SECRET_KEY` must be a **64-character hexadecimal string** (digits `0–9` and letters `a–f` only).
+`GARAGE_SECRET_KEY` must be a **64-character hexadecimal string** (`0–9` and `a–f` only).
 
 ---
 
@@ -165,7 +166,7 @@ s3cmd --access_key="GKyour28charkey..." \
 
 The access key does not exist in Garage. Most common causes:
 
-1. **Invalid key format** — Check that `GARAGE_ACCESS_KEY` is exactly 28 characters (`GK` + 26 alphanumeric). See the format rules above.
+1. **Invalid key format** — Check that `GARAGE_ACCESS_KEY` is `GK` + 24 hex chars (`0-9a-f`) = 26 total. See the format rules above.
 2. **Initialization failed mid-way** — The service started but credentials were never fully set up.
 
 **How to reset and retry:**
@@ -198,8 +199,8 @@ Confirm your S3 client is using **path-style addressing** (see the connection ex
 | `GARAGE_BUCKET` | `my-bucket` | Name of the primary bucket created on first boot |
 | `GARAGE_KEY_NAME` | `admin-key` | Label for the auto-generated key (not the key ID) |
 | `GARAGE_RPC_SECRET` | *(auto)* | 64-char hex RPC secret — auto-generated and persisted to volume |
-| `GARAGE_ACCESS_KEY` | *(auto)* | Custom access key ID — must be `GK` + 26 alphanumeric chars (28 total) |
-| `GARAGE_SECRET_KEY` | *(auto)* | Custom secret key — must be a 64-char hexadecimal string |
+| `GARAGE_ACCESS_KEY` | *(auto)* | Custom access key ID — must be `GK` + 24 hex chars (`0-9a-f`) = 26 total |
+| `GARAGE_SECRET_KEY` | *(auto)* | Custom secret key — must be a 64-char hexadecimal string (`0-9a-f`) |
 | `PORT` | `3900` | S3 API port — set automatically by Railway, do not change |
 
 ---

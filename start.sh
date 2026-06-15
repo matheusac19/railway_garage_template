@@ -45,6 +45,9 @@ rpc_secret = "${GARAGE_RPC_SECRET}"
 [s3_api]
 s3_region = "garage"
 api_bind_addr = "[::]:${PORT}"
+
+[admin]
+api_bind_addr = "127.0.0.1:3902"
 EOF
 
 # 4. Start Garage server in the background
@@ -52,11 +55,14 @@ echo "[INFO] Starting Garage server on port ${PORT}..."
 garage -c /etc/garage.toml server > /tmp/garage.log 2>&1 &
 GARAGE_PID=$!
 
-# Wait until Garage responds (up to 30 seconds) instead of a fixed sleep
+# Wait until the Garage admin API responds (up to 30 seconds).
+# We use the admin API health endpoint because `garage node id` reads from
+# local SQLite and returns before the RPC port is actually bound — which
+# causes subsequent CLI commands to fail with "Connection refused".
 echo "[INFO] Waiting for Garage to be ready..."
 MAX_WAIT=30
 WAITED=0
-until garage -c /etc/garage.toml node id > /dev/null 2>&1; do
+until curl -sf http://127.0.0.1:3902/health > /dev/null 2>&1; do
     if [ "$WAITED" -ge "$MAX_WAIT" ]; then
         echo "[ERROR] Garage did not become ready after ${MAX_WAIT}s. Server logs:"
         cat /tmp/garage.log
@@ -103,15 +109,19 @@ if [ ! -f "/data/.initialized" ]; then
         KEY_LEN=${#GARAGE_ACCESS_KEY}
         KEY_SUFFIX=$(echo "$GARAGE_ACCESS_KEY" | sed 's/^GK//')
         SUFFIX_LEN=${#KEY_SUFFIX}
-        if [ "$KEY_LEN" -ne 28 ] || ! echo "$KEY_SUFFIX" | grep -qE '^[0-9a-zA-Z]{26}$'; then
+        # Garage v2 requires: GK + exactly 12 hex-encoded bytes = GK + 24 hex chars = 26 total
+        # Only 0-9 and a-f are valid — letters like g, n, r, etc. are NOT hex
+        if [ "$KEY_LEN" -ne 26 ] || ! echo "$KEY_SUFFIX" | grep -qE '^[0-9a-fA-F]{24}$'; then
             echo "[ERROR] --------------------------------------------------------"
             echo "[ERROR] GARAGE_ACCESS_KEY is invalid: '${GARAGE_ACCESS_KEY}'"
             echo "[ERROR]"
-            echo "[ERROR] Garage requires: GK + exactly 26 alphanumeric chars = 28 total"
-            echo "[ERROR]   Your key : GK + ${SUFFIX_LEN} chars = ${KEY_LEN} total  ← must be GK + 26 = 28"
+            echo "[ERROR] Garage requires: GK + 24 hex characters (0-9, a-f) = 26 total"
+            echo "[ERROR]   Your key  : GK + ${SUFFIX_LEN} chars = ${KEY_LEN} total"
+            echo "[ERROR]   Required  : GK + 24 hex chars = 26 total"
+            echo "[ERROR]   Hex chars : only 0-9 and a-f  (not g, h, i, n, r...)"
             echo "[ERROR]"
-            echo "[ERROR] Fix — generate a valid pair in any terminal:"
-            echo "[ERROR]   Access Key: echo \"GK\$(openssl rand -hex 13)\""
+            echo "[ERROR] Fix — run in any terminal (Linux, Mac, Git Bash, WSL):"
+            echo "[ERROR]   Access Key: echo \"GK\$(openssl rand -hex 12)\""
             echo "[ERROR]   Secret Key: openssl rand -hex 32"
             echo "[ERROR]"
             echo "[ERROR] Update GARAGE_ACCESS_KEY and GARAGE_SECRET_KEY in"
@@ -223,7 +233,7 @@ echo ""
 echo "  Env vars (Railway → Variables):"
 echo "    GARAGE_BUCKET       bucket name                   (default: my-bucket)"
 echo "    GARAGE_KEY_NAME     label for auto-generated key  (default: admin-key)"
-echo "    GARAGE_ACCESS_KEY   custom key ID  → GK + 26 alphanumeric = 28 chars"
+echo "    GARAGE_ACCESS_KEY   custom key ID  → GK + 24 hex chars (0-9a-f) = 26 total"
 echo "    GARAGE_SECRET_KEY   custom secret  → 64-char hexadecimal string"
 echo ""
 echo "  If something is broken: open Console tab and run 'rm /data/.initialized'"
