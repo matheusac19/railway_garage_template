@@ -12,7 +12,7 @@ RUN curl -L -o /usr/local/bin/garage https://garagehq.deuxfleurs.fr/_releases/v2
 # Cria as pastas necessárias
 RUN mkdir -p /data/meta /data/data /etc/garage
 
-# Copia o nosso script e dá permissão
+# Copia o nosso script e dá permissão.
 COPY start.sh /start.sh
 RUN chmod +x /start.sh
 
