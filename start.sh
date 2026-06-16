@@ -32,6 +32,24 @@ else
     echo -n "$GARAGE_RPC_SECRET" > /data/rpc_secret
 fi
 
+# 2b. Admin API token management
+#     The WebUI (and any admin API client) MUST send this token as a
+#     "Authorization: Bearer" header. Without an admin_token configured,
+#     Garage v2 returns 403 Forbidden on EVERY admin endpoint
+#     (GetClusterHealth, ListBuckets, ...). The /health endpoint stays public.
+#     Priority: user-supplied env var > token saved on volume > generate a new one.
+if [ -n "$GARAGE_ADMIN_TOKEN" ]; then
+    ADMIN_TOKEN=$(echo "$GARAGE_ADMIN_TOKEN" | tr -d ' ' | tr -d '\n')
+    echo "[INFO] Using admin token supplied via GARAGE_ADMIN_TOKEN."
+elif [ -f "/data/admin_token" ]; then
+    ADMIN_TOKEN=$(cat /data/admin_token)
+    echo "[INFO] Admin token loaded from persistent volume."
+else
+    ADMIN_TOKEN=$(openssl rand -hex 32)
+    echo "[INFO] GARAGE_ADMIN_TOKEN not set — generated a secure random admin token."
+fi
+echo -n "$ADMIN_TOKEN" > /data/admin_token
+
 # 3. Write Garage configuration file
 cat <<EOF > /etc/garage.toml
 metadata_dir = "/data/meta"
@@ -48,6 +66,7 @@ api_bind_addr = "[::]:${PORT}"
 
 [admin]
 api_bind_addr = "0.0.0.0:3902"
+admin_token = "${ADMIN_TOKEN}"
 EOF
 
 # 4. Start Garage server in the background
@@ -184,9 +203,12 @@ else
     ENDPOINT="http://localhost:${PORT}"
 fi
 
-echo "  Endpoint : ${ENDPOINT}"
-echo "  Region   : garage"
-echo "  Bucket   : ${GARAGE_BUCKET}"
+echo "  Endpoint   : ${ENDPOINT}"
+echo "  Region     : garage"
+echo "  Bucket     : ${GARAGE_BUCKET}"
+echo "  Admin API  : http://${RAILWAY_PRIVATE_DOMAIN:-<service>.railway.internal}:3902"
+echo "  Admin Token: ${ADMIN_TOKEN}"
+echo "               ^ set this as API_ADMIN_KEY in the WebUI service"
 
 if [ -n "$GARAGE_ACCESS_KEY" ] && [ -n "$GARAGE_SECRET_KEY" ]; then
     # Custom key — show the key ID, reference the env var for the secret
